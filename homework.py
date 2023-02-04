@@ -5,6 +5,8 @@ import time
 import requests
 import telegram
 
+from http import HTTPStatus
+
 from dotenv import load_dotenv
 
 from exceptions import (TokenMissingException,
@@ -71,7 +73,7 @@ def get_api_answer(timestamp):
         payload = {'from_date': timestamp}
         response = requests.get(ENDPOINT, headers=HEADERS, params=payload)
         response_status = response.status_code
-        if response_status != 200:
+        if response_status != HTTPStatus.OK:
             message = (
                 f'Сбой в работе программы: Эндпоинт {ENDPOINT} недоступен. '
                 f'Код ответа API: {response.status_code}'
@@ -80,33 +82,27 @@ def get_api_answer(timestamp):
         return response.json()
     except UnavailableEndpointException:
         logging.error(message)
-    except Exception:
-        logging.error(message)
+        raise Exception
+    except Exception as error:
+        logging.error(f'Ошибка при запросе к основному API: {error}')
 
 
 def check_response(response):
     """Check if response is dict and at least one of its values is list."""
-    try:
-        if not all(
-            (isinstance(response, dict),
-             isinstance(response['homeworks'], list))
-        ):
-            raise TypeError(
-                'Структура данных не соответствует ожиданиям'
-            )
-        response_keys = ('current_date', 'homeworks')
-        keys = response.keys()
-        for key in response_keys:
-            if key not in keys:
-                message = f'Ключ {key} отсутсвует в ответе API'
-                raise ResponseKeysMissingException(message)
-        return True
-    except TypeError:
+    if not isinstance(response, dict):
         logging.error('Структура данных не соответствует ожиданиям')
-        return False
-    except ResponseKeysMissingException:
-        logging.error(message)
-        return False
+        raise TypeError
+    response_keys = ('current_date', 'homeworks')
+    keys = response.keys()
+    for key in response_keys:
+        if key not in keys:
+            message = f'Ключ {key} отсутсвует в ответе API'
+            logging.error(message)
+            raise ResponseKeysMissingException(message)
+    if not isinstance(response['homeworks'], list):
+        logging.error('Структура данных не соответствует ожиданиям')
+        raise TypeError
+    return True
 
 
 def parse_status(homework):
@@ -133,8 +129,10 @@ def parse_status(homework):
         logging.error(
             'В ответе API домашки нет ключа "homework_name"'
         )
+        raise Exception
     except InvalidHomeworkStatusException:
         logging.error(message)
+        raise Exception
 
 
 def main():
@@ -159,6 +157,7 @@ def main():
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             send_message(bot, message)
+            time.sleep(RETRY_PERIOD)
 
 
 if __name__ == '__main__':
