@@ -2,17 +2,18 @@ import logging
 import os
 import time
 
+from http import HTTPStatus
+
 import requests
 import telegram
-
-from http import HTTPStatus
 
 from dotenv import load_dotenv
 
 from exceptions import (TokenMissingException,
                         ResponseKeysMissingException,
                         InvalidHomeworkStatusException,
-                        UnavailableEndpointException)
+                        UnavailableEndpointException,
+                        EndpointException)
 
 load_dotenv()
 
@@ -47,7 +48,7 @@ def check_tokens():
         'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID
     }
     for key, value in tokens.items():
-        if value is None:
+        if not value:
             message = (
                 f'Отсутствует обязательная переменная окружения: {key} \n'
                 'Программа принудительно остановлена.'
@@ -76,22 +77,22 @@ def get_api_answer(timestamp):
         if response_status != HTTPStatus.OK:
             message = (
                 f'Сбой в работе программы: Эндпоинт {ENDPOINT} недоступен. '
-                f'Код ответа API: {response.status_code}'
+                f'Код ответа API: {response_status}'
             )
+            logging.error(message)
             raise UnavailableEndpointException(message)
         return response.json()
-    except UnavailableEndpointException:
-        logging.error(message)
-        raise Exception
     except Exception as error:
-        logging.error(f'Ошибка при запросе к основному API: {error}')
+        message = f'Ошибка при запросе к основному API: {error}'
+        logging.error(message)
+        raise EndpointException(message)
 
 
 def check_response(response):
     """Check if response is dict and at least one of its values is list."""
     if not isinstance(response, dict):
-        logging.error('Структура данных не соответствует ожиданиям')
-        raise TypeError
+        logging.error('Ответ API не является словарем')
+        raise TypeError('Ответ API не является словарем')
     response_keys = ('current_date', 'homeworks')
     keys = response.keys()
     for key in response_keys:
@@ -100,8 +101,8 @@ def check_response(response):
             logging.error(message)
             raise ResponseKeysMissingException(message)
     if not isinstance(response['homeworks'], list):
-        logging.error('Структура данных не соответствует ожиданиям')
-        raise TypeError
+        logging.error('Ответ API по ключу "homeworks" не является списком')
+        raise TypeError('Ответ API по ключу "homeworks" не является списком')
     return True
 
 
@@ -109,30 +110,22 @@ def parse_status(homework):
     """Check status of given homework.
     Return verdict according to HOMEWORK_VERDICTS.
     """
-    try:
-        homework_keys = ('homework_name', 'status')
-        for key in homework_keys:
-            if key not in homework.keys():
-                raise ResponseKeysMissingException(
-                    f'В ответе API домашки нет ключа {key}'
-                )
-        homework_name = homework.get('homework_name')
-        status = homework.get('status')
-        if status not in HOMEWORK_VERDICTS.keys():
-            message = (
-                f'Неожиданный статус {status} домашней работы {homework_name}'
-            )
-            raise InvalidHomeworkStatusException(message)
-        verdict = HOMEWORK_VERDICTS.get(status)
-        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
-    except ResponseKeysMissingException:
-        logging.error(
-            'В ответе API домашки нет ключа "homework_name"'
+    homework_keys = ('homework_name', 'status')
+    for key in homework_keys:
+        if key not in homework.keys():
+            message = f'В ответе API домашки нет ключа {key}'
+            logging.error(message)
+            raise ResponseKeysMissingException(message)
+    homework_name = homework.get('homework_name')
+    status = homework.get('status')
+    if status not in HOMEWORK_VERDICTS.keys():
+        message = (
+            f'Неожиданный статус {status} домашней работы {homework_name}'
         )
-        raise Exception
-    except InvalidHomeworkStatusException:
         logging.error(message)
-        raise Exception
+        raise InvalidHomeworkStatusException(message)
+    verdict = HOMEWORK_VERDICTS.get(status)
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
@@ -140,6 +133,7 @@ def main():
     check_tokens()
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time())
+    last_error = None
 
     while True:
         try:
@@ -156,7 +150,10 @@ def main():
             time.sleep(RETRY_PERIOD)
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
-            send_message(bot, message)
+            logging.error(message)
+            if error != last_error:
+                send_message(bot, message)
+            last_error = error
             time.sleep(RETRY_PERIOD)
 
 
