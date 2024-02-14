@@ -52,7 +52,9 @@ python3 homework.py
 ## Technologies used:
 
 - Python,
-- Python Telegram Bot
+- Python Telegram Bot.
+- logging,
+- requests.
 
 ## Project author:
 [Artem Tereschenko](https://github.com/Artem-Ter)
